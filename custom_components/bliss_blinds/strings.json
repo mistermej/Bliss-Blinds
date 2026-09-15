@@ -1,0 +1,38 @@
+{
+  "config": {
+    "abort": {
+      "no_devices_found": "No Hunter Douglas Bliss blinds could be found. Make sure they are powered and in range, then try again.",
+      "not_supported": "This device is not a supported Hunter Douglas Bliss motor.",
+      "already_configured": "This device is already configured."
+    },
+    "error": {},
+    "step": {
+      "user": {
+        "title": "Bliss Blinds",
+        "description": "Select the Hunter Douglas Bliss motor to add.\n\nOnly motors discovered as `HDxxxx` are shown — the Bluetooth name is the motor model.",
+        "data": {
+          "address": "Blind"
+        }
+      },
+      "blind_type": {
+        "title": "Pick the blind type",
+        "description": "Detected motor **{model}** named **{name}** ({serial_number}).\n\nThe motor doesn't tell the app which kind of blind it is — this is the type you picked when pairing it in the Bliss app.",
+        "data": {
+          "blind_type": "Blind type"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Bliss Blinds options",
+        "description": "Correct the blind type if it was set wrong, or adjust the ShangriLa tilt-open fraction (0 = default).",
+        "data": {
+          "blind_type": "Blind type",
+          "tilt_open": "ShangriLa tilt-open fraction"
+        }
+      }
+    }
+  }
+}
