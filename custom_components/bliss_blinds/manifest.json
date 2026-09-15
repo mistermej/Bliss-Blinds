@@ -1,15 +1,21 @@
 {
   "domain": "bliss_blinds",
   "name": "Bliss Blinds",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "config_flow": true,
   "integration_type": "device",
   "iot_class": "local_polling",
-  "dependencies": ["bluetooth"],
-  "requirements": ["bleak-retry-connector>=4.7"],
+  "dependencies": [
+    "bluetooth"
+  ],
+  "requirements": [
+    "bleak-retry-connector>=4.7"
+  ],
   "documentation": "https://github.com/mistermej/Bliss-Blinds",
   "issue_tracker": "https://github.com/mistermej/Bliss-Blinds/issues",
-  "codeowners": ["@mistermej"],
+  "codeowners": [
+    "@mistermej"
+  ],
   "bluetooth": [
     {
       "connectable": true,

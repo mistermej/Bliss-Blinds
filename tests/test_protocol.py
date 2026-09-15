@@ -39,6 +39,7 @@ from bliss_blinds_protocol import (  # noqa: E402
     OperatingStatus,
     READ_STATUS,
     ROLLER_STOP,
+    SET_TIME_PREFIX,
     TILT_TO_ANGLE_PREFIX,
     TOP_TO_POSITION_PREFIX,
     max_tilt_angle,
@@ -50,6 +51,7 @@ from bliss_blinds_protocol import (  # noqa: E402
     parse_frame,
     position_bytes,
     raw_from_fraction,
+    set_internal_clock,
     set_shangrila_tilt_command,
     set_tilt_command,
     shangrila_tilt_angle_to_position,
@@ -355,6 +357,26 @@ class TestConstants(unittest.TestCase):
         self.assertEqual(HEARTBEAT, b"\xff\x01\x01\x01\x01\x01\x01")
         self.assertEqual(READ_STATUS, b"\xff\x78\xea\x41\xd1\x03\x01")
         self.assertEqual(ROLLER_STOP, b"\xff\x78\xea\x41\x5f\x03\x01")
+
+
+class TestSetInternalClock(unittest.TestCase):
+    def test_frame_shape(self):
+        # setTimePrefix + 6 GregorianCalendar time bytes (BlissCommandsKt :1478).
+        frame = set_internal_clock()
+        self.assertEqual(len(frame), 14)
+        self.assertEqual(frame[:8], SET_TIME_PREFIX)
+        self.assertEqual(SET_TIME_PREFIX, b"\xff\x78\xea\x41\x28\x07\x41\x35")
+
+    def test_time_bytes_in_range(self):
+        frame = set_internal_clock()
+        year, month, day, hour, minute, second = frame[8:]
+        # year = UTC_year - 2000; month is field+1 = calendar month (1-12)
+        self.assertTrue(0 <= year <= 200)
+        self.assertTrue(1 <= month <= 12)
+        self.assertTrue(1 <= day <= 31)
+        self.assertTrue(0 <= hour <= 23)
+        self.assertTrue(0 <= minute <= 59)
+        self.assertTrue(0 <= second <= 59)
 
 
 if __name__ == "__main__":

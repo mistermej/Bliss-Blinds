@@ -47,6 +47,7 @@ DISCOVERY_NAME_RE = re.compile(r"^HD\d{4}$")
 HEADER = b"\xff\x78\xea\x41"                    # BlissCommands.HEADER
 HEARTBEAT = b"\xff\x01\x01\x01\x01\x01\x01"     # BlissCommands.heartbeat
 READ_STATUS = HEADER + b"\xd1\x03\x01"          # BlissCommands.readStatus
+SET_TIME_PREFIX = HEADER + b"\x28\x07\x41\x35"  # BlissCommands.setTimePrefix
 GOTO_PREFIX = HEADER + b"\xbf\x03"              # gotoPrefix (top bar, single servo)
 TOP_TO_POSITION_PREFIX = HEADER + b"\xb1\x03"   # topToPosition (double-servo top)
 BOTTOM_TO_POSITION_PREFIX = HEADER + b"\xf4\x03"  # bottomToPosition
@@ -55,6 +56,38 @@ MOVE_BOTH_BARS_PREFIX = HEADER + b"\xfe\x03"    # moveBothBars
 ROLLER_STOP = HEADER + b"\x5f\x03\x01"          # rollerStop
 ROLLER_UP = HEADER + b"\xcf\x03\x01"            # rollerUp (jog only)
 ROLLER_DOWN = HEADER + b"\x1f\x03\x01"          # rollerDown (jog only)
+
+
+# --------------------------------------------------------------------------- #
+# setInternalClock — sent on every connect before readStatus                   #
+# (DeviceConnection.smali:5615, BlissCommandsKt.smali:1478)                   #
+# --------------------------------------------------------------------------- #
+def set_internal_clock() -> bytes:
+    """Build the setInternalClock frame.
+
+    ``getSetTimePrefix()`` (FF 78 EA 41 28 07 41 35, BlissCommands.smali
+    :755 array_3b) prepended to6 time bytes:
+        byte[0] = year − 2000 (GregorianCalendar field 1, BlissCommandsKt :1478)
+        byte[1] = month + 1   (field 2)
+        byte[2] = day          (field 5)
+        byte[3] = hour         (field 11)
+        byte[4] = minute       (field 12)
+        byte[5] = second       (field 13)
+
+    Called after BLE connect, before readStatus. Motor may gate status
+    responses on receiving a valid clock frame first.
+    """
+    from datetime import datetime as _dt
+    now = _dt.now()
+    time_bytes = bytes([
+        now.year - 2000,
+        now.month,
+        now.day,
+        now.hour,
+        now.minute,
+        now.second,
+    ])
+    return SET_TIME_PREFIX + time_bytes
 
 STATUS_D1 = 0xD1   # single-motor response  (DeviceConnection.smali:2129 "-0x2f")
 STATUS_D2 = 0xD2   # double-motor response

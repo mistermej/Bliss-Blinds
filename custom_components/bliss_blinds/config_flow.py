@@ -131,14 +131,25 @@ class BlissBlindsConfigFlow(ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
-        return BlissBlindsOptionsFlow(config_entry)
+        # HA 2024.x+: OptionsFlow is constructed with NO arguments and the
+        # config entry is resolved lazily via the handler/id the manager sets
+        # after this returns. Passing config_entry to the constructor is what
+        # historically made the Options menu 500.
+        return BlissBlindsOptionsFlow()
 
 
 class BlissBlindsOptionsFlow(OptionsFlow):
-    """Options: correct the blind type later, or tune the ShangriLa tilt-open."""
+    """Options: correct the blind type later, or tune the ShangriLa tilt-open.
 
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        self.config_entry = config_entry
+    NOTE: on HA 2024.x+ the base ``OptionsFlow`` has no ``__init__``; the
+    ``config_entry`` is a read-only property resolved lazily from the flow's
+    ``handler`` (the entry id), which the flow manager sets AFTER construction.
+    Assigning ``self.config_entry`` in our own ``__init__`` raises
+    ``AttributeError: can't set attribute`` -> the Options menu fails to load
+    with a 500. So there is deliberately no ``__init__`` here and the entry is
+    read via the property inside the step (safe: the manager populates
+    ``hass``/``handler`` before any step runs).
+    """
 
     async def async_step_init(
         self, user_input: Optional[dict[str, Any]] = None
@@ -146,15 +157,16 @@ class BlissBlindsOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
 
+        entry = self.config_entry
         schema = vol.Schema(
             {
                 vol.Required(
                     CONF_BLIND_TYPE,
-                    default=self.config_entry.data.get(CONF_BLIND_TYPE, DEFAULT_BLIND_TYPE),
+                    default=entry.data.get(CONF_BLIND_TYPE, DEFAULT_BLIND_TYPE),
                 ): vol.In({t: t for t in ALL_BLIND_TYPES}),
                 vol.Optional(
                     CONF_TILT_OPEN,
-                    default=self.config_entry.options.get(CONF_TILT_OPEN, DEFAULT_TILT_OPEN),
+                    default=entry.options.get(CONF_TILT_OPEN, DEFAULT_TILT_OPEN),
                 ): vol.All(
                     vol.Coerce(float),
                     vol.Range(min=0.0, max=0.999, message="tilt_open must be < 1.0"),

@@ -317,4 +317,43 @@ for BA24. This was extracted directly from `BlissCommandsKt.smali`.
 
 ---
 
-*End of logbook. Last updated: 2026-09-14.*
+## 2026-09-15: Protocol-level fix — setInternalClock + Options 500 (0.1.4)
+
+### Every-blind-unavailable: missing `setInternalClock` handshake
+
+Root cause identified by reading the app's connect sequence byte-by-byte:
+
+`DeviceConnection.smali:5615–5618`:
+1. `setInternalClock()` → `BlissCommandsKt.setInternalClock` (:1478)
+2. `getStatus()` → sends `readStatus` (`FF 78 EA 41 D1 03 01`)
+
+Our coordinator was sending only step 2. The motor never replied with a D1/D2
+status frame, so `self.data` stayed `None` and the entity stayed unavailable.
+
+**The setInternalClock frame:**
+- Prefix: `FF 78 EA 41 28 07 41 35` (BlissCommands.smali:755, array_3b)
+- + 6 GregorianCalendar bytes: `[year−2000, month, day, hour, min, sec]`
+  (BlissCommandsKt.smali:1478, `GregorianCalendar` fields 1, 2, 5, 11, 12, 13)
+
+**Hypothesis:** the motor gates status responses on a valid clock frame. The
+app always sends the current time on connect; skipping it was the last
+remaining protocol deviation. If this still doesn't work, the new comprehensive
+notify logging will show exactly what the motor returns.
+
+### Options flow 500
+
+HA 2026.9 base `OptionsFlow.__init__` does not exist — the flow manager sets
+`hass`, `handler`, `context`, `flow_id` after construction. Our
+`BlissBlindsOptionsFlow.__init__` assigned `self.config_entry = config_entry`,
+which raises `AttributeError: can't set attribute` on the read-only property.
+Fixed by removing the `__init__` override entirely.
+
+### Comprehensive notify logging
+
+Every BLE notification (all bytes) is now logged at DEBUG. Frames that don't
+parse as D1/D2 get an explicit `"frame not D1/D2 (dropped): status=0x%02X"`
+line. This makes protocol-level blind spots diagnosable without code changes.
+
+---
+
+*End of logbook. Last updated: 2026-09-15.*
