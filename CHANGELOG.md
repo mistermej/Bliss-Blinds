@@ -5,6 +5,30 @@ This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.4] — 2026-09-15
+
+### Fixed
+- **Every blind entity stayed "unavailable" (all models, all types)** — the
+  coordinator sent `readStatus` immediately after BLE connect, but the motor
+  never replied with a D1/D2 frame. Root cause: the app's connect handshake
+  sends `setInternalClock()` **before** `readStatus()` (DeviceConnection.smali
+  :5615–5618); the motor gates status responses on receiving a valid clock
+  frame first. The6-byte GregorianCalendar time payload was missing entirely.
+  Now matches the app exactly: `setInternalClock` → `readStatus`.
+- **Options menu showed "500 Internal Server Error"** — HA 2026.9 base
+  `OptionsFlow` has no `__init__`; `config_entry` is a read-only property set
+  by the flow manager after construction. Our `__init__` was assigning it
+  directly, raising `AttributeError: can't set attribute`. Removed the
+  `__init__` override; the entry is now read via the property inside the step.
+
+### Changed
+- Every BLE notification is now logged as hex at DEBUG level, including a
+  `"frame not D1/D2 (dropped): status=0x%02X"` line for frames that don't
+  match a known status type — makes protocol-level blind spots visible in
+  `home-assistant.log` without any code changes.
+
+---
+
 ## [0.1.3] — 2026-09-15
 
 ### Fixed

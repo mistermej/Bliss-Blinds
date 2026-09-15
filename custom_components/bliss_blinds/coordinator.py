@@ -63,6 +63,7 @@ from .protocol import (
     move_both_bars_command,
     move_to_position_command,
     parse_frame,
+    set_internal_clock,
     set_shangrila_tilt_command,
     set_tilt_command,
 )
@@ -190,7 +191,7 @@ class BlissBlindCoordinator:
                 )
                 await client.start_notify(RESPONSE_CHARACTERISTIC_UUID, self._on_notify)
             except (BleakError, OSError, asyncio.TimeoutError) as err:
-                _LOGGER.debug("Connect failed for %s: %s", self.address, err)
+                _LOGGER.warning("Bliss blind %s connect failed: %s", self.address, err)
                 if client is not None:
                     try:
                         await client.disconnect()
@@ -201,7 +202,10 @@ class BlissBlindCoordinator:
             self._client = client
             self.data = None
             _LOGGER.info("Connected to Bliss blind %s", self.address)
-            # Seed state immediately (app sends readStatus on connect).
+            # App connect handshake: setInternalClock() THEN readStatus()
+            # (DeviceConnection.smali:5615–5618). Motor may gate status
+            # responses on receiving a valid clock frame first.
+            await self._write_frame(set_internal_clock())
             await self._write_frame(READ_STATUS)
             return True
 
@@ -303,9 +307,17 @@ class BlissBlindCoordinator:
     def _on_notify(self, _char: Any, data: bytearray) -> None:
         """Bleak notify callback — may run on the event loop thread already,
         but schedule via the loop to be safe from any thread."""
-        state = parse_frame(bytes(data), self.blind)
+        raw = bytes(data)
+        _LOGGER.debug("Bliss %s notify: %s", self.address, _hex(raw))
+        state = parse_frame(raw, self.blind)
         if state is None:
-            return  # heartbeat ack / other status frames are not state-carrying
+            _LOGGER.debug(
+                "Bliss %s frame not D1/D2 (dropped): status=0x%02X len=%d",
+                self.address,
+                raw[4] if len(raw) > 4 else 0x00,
+                len(raw),
+            )
+            return
         self.hass.loop.call_soon_threadsafe(self._update_state, state)
 
     def _update_state(self, state: BlindState) -> None:
