@@ -196,6 +196,37 @@ All depend on configurable `tilt_open` (default 0.0):
 | Coordinator `_connect_lock` never released on inner return | Manual review of async_ensure_connected | Added explicit `return False` before lock release was wrong; restructured to ensure lock is properly released via `async with` |
 | **Manifest JSON invalid: `"codeowners": [mistermej]`** | User copied folder to HA, integration wouldn't appear | User had edited the placeholder `codeowners` to their GitHub name but left it **unquoted**, breaking the entire manifest's JSON. HA silently rejects whole-file invalid manifests. Fixed to `["@mistermej"]` (quoted handle format). **Lesson: every manifest edit must be valid JSON — HA never logs a targeted message for a broken manifest.** |
 | **Config flow won't load: "Invalid handler specified" — `bleak.exceptions` is gone in bleak 3.x** | After manifest fix, user saw "Config flow could not be loaded: {\"message\":\"Invalid handler specified\"}" | HA 2026.9 pins **bleak==3.0.2**, and bleak 3.0 **renamed `bleak.exceptions` → `bleak.exc`**. Our `from bleak.exceptions import BleakError` raised `ModuleNotFoundError` the instant HA imported `config_flow.py` (package `__init__` → coordinator chain), and HA surfaces any import failure in the flow chain as the generic "Invalid handler specified". Fixed to `from bleak import BleakClient, BleakError` (BleakError is re-exported at the top level in 3.x). Also verified the rest of our bleak API against v3.0.2: `BleakClient(device, timeout=…)` ✓, `write_gatt_char(char, data, response=True)` ✓, `is_connected` property ✓, `start_notify`/`stop_notify`/`connect`/`disconnect` ✓. **Lessons: (1) HA silently collapses a config-flow import error into "Invalid handler specified" — the real traceback is only in home-assistant.log; (2) when targeting current HA, verify third-party API names against HA's pinned dependency versions (package_constraints.txt).** |
+| **TDBU blind types (PlisseTDBU/DuetteTDBU/DuettePlisseTDBU/PlisseDuetteTDBU) "don't do anything" — cover never moves, battery stuck Unknown, entity unavailable** | Live test: selecting a TDBU type for an HD3800 produced a dead cover + dead battery; HA log showed `BleakClient.connect() called without bleak-retry-connector` | Two-part investigation. **(1) Protocol check:** TDBU needs **no** type-specific handling. `BlindKt.isTDBU` (`BlindKt.smali:785`) is used *only* in the advanced-settings UI (`AdvancedSettingsScreenKt.smali:6515`), never for movement or parsing. Movement = the standard double-servo path: `setPosition(FF)` (`DeviceConnection.smali:8531`) builds `moveBothBars + short(round(f·range)) + short(...)` where callers pass `f = 1 − displayValue/100` (`MultiConnectViewModel.smali:5354–5385`), i.e. `raw = round((1−d)·range)` — byte-identical to our `move_both_bars_command`. readStatus stays `FF 78 EA 41 D1 03 01` (`BlissCommands.smali:1464`). The reply is D1 or D2 and our `parse_frame` already matches the app's indices (`handleMotorPositionResponse` `DeviceConnection.smali:4969`; D2 tilt at body[5] `:2850`). **(2) Root cause:** the coordinator connected with a bare `BleakClient.connect()`. On HA that bypasses `bleak_retry_connector.establish_connection()` (the supported path, ships with HA core as `==4.7.1`), which warns and connects unreliably → no notify ever arrives → `available` stays False → entity shows "unavailable". **Fix:** connect via `establish_connection(BleakClient, device, address, timeout=…, ble_device_callback=…)` (retries up to 4, re-fetches the live registry device). Also added per-frame debug logging (`send:`/`notify:` hex ⇒ distinguishes "motor never replies" from "frame unparsed"). Signed off against the actual pinned wheels (bleak 3.0.2 accepts the `establish_connection` kwargs; `BleakConnectionError` subclasses `BleakError`). |
+
+---
+
+## 2026-09-15: Live-Test Fix — connect reliability (0.1.3)
+
+User's first HACS live test surfaced two things:
+
+1. **Auto-recognition question** — answered: no. The BLE advert name is the
+   *motor model* (`^HD\d{4}$`); the *blind type* is never transmitted over
+   BLE (same as the app — the user picks it). The dropdown stays.
+2. **TDBU blinds appeared dead** — see the bug row above. Verdict: protocol is
+   correct for TDBU (double-servo HD3800, moveBothBars, D1/D2 parse — all
+   cross-checked to smali). The real failure was the **bare `BleakClient.connect()`**
+   path, which HA flags with *"BleakClient.connect() called without
+   bleak-retry-connector"* and which connects unreliably.
+
+Changes in 0.1.3:
+- `coordinator.py`: connect through `bleak_retry_connector.establish_connection()`
+  with a `ble_device_callback` that re-fetches the live registry device;
+  `max_attempts` default (4) gives retry+backoff the bare connect lacked.
+- `coordinator.py`: raw `send:` / `notify:` hex at DEBUG plus an explicit
+  "frame not D1/D2 (dropped)" line, so a future dead-device report can be
+  diagnosed from the log alone.
+- `manifest.json`: `requirements: ["bleak-retry-connector>=4.7"]` (already
+  present in HA core; declared for correctness), version → 0.1.3.
+
+Diagnostics note for future sessions: `available`/entity state only changes
+after a decoded D1/D2 frame (`_update_state`). Persistent "unavailable" ⇒ no
+frame ever parsed ⇒ check `send:`/`notify:` in debug logs to split
+connect-failure vs unrecognized-frame.
 
 ---
 

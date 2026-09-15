@@ -24,6 +24,15 @@ from typing import Any, Callable, Optional
 # importing it raises ModuleNotFoundError on HA 2026.x, which pins bleak==3.0.2).
 from bleak import BleakClient, BleakError
 
+# HA ships bleak-retry-connector==4.7.1 as a core bluetooth dependency.
+# establish_connection() is the supported connect path on HA: it retries the
+# connection (up to 4 attempts), re-fetches the live registry device via
+# ble_device_callback, and cooperates with the BT manager/scanner. A bare
+# BleakClient.connect() emits a WARNING ("BleakClient.connect() called without
+# bleak-retry-connector") and connects unreliably, which shows up as devices
+# that never become available.
+from bleak_retry_connector import establish_connection
+
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -59,6 +68,11 @@ from .protocol import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _hex(frame: bytes) -> str:
+    """Uppercase space-separated hex for readable debug logs."""
+    return frame.hex(" ").upper()
 
 
 class BlissBlindCoordinator:
@@ -163,16 +177,25 @@ class BlissBlindCoordinator:
                 )
                 return False
 
+            client: Optional[BleakClient] = None
             try:
-                client = BleakClient(device, timeout=CONNECT_TIMEOUT)
-                await client.connect()
+                client = await establish_connection(
+                    BleakClient,
+                    device,
+                    self.address,
+                    timeout=CONNECT_TIMEOUT,
+                    ble_device_callback=lambda: bluetooth.async_ble_device_from_address(
+                        self.hass, self.address, connectable=True
+                    ),
+                )
                 await client.start_notify(RESPONSE_CHARACTERISTIC_UUID, self._on_notify)
-            except (BleakError, TimeoutError, asyncio.TimeoutError, OSError) as err:
+            except (BleakError, OSError, asyncio.TimeoutError) as err:
                 _LOGGER.debug("Connect failed for %s: %s", self.address, err)
-                try:
-                    await client.disconnect()
-                except Exception:  # noqa: BLE001
-                    pass
+                if client is not None:
+                    try:
+                        await client.disconnect()
+                    except Exception:  # noqa: BLE001
+                        pass
                 return False
 
             self._client = client
@@ -216,6 +239,7 @@ class BlissBlindCoordinator:
             if not self.is_connected:
                 raise BleakError(f"{self.address} not connected")
             # With-response write, like the app (DeviceConnection.sendWriteCommand).
+            _LOGGER.debug("Bliss %s send: %s", self.address, _hex(frame))
             await self._client.write_gatt_char(
                 COMMAND_CHARACTERISTIC_UUID, frame, response=True
             )

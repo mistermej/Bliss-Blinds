@@ -5,6 +5,26 @@ This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.3] — 2026-09-15
+
+### Fixed
+- **Blinds whose entity stayed "unavailable"** (the TDBU / double-servo types
+  on HD3800) — the coordinator connected with a bare `BleakClient.connect()`,
+  which Home Assistant logs as *"BleakClient.connect() called without
+  bleak-retry-connector"* and which connects unreliably, so no status frames
+  were ever received. Connecting now goes through
+  `bleak_retry_connector.establish_connection()` — the HA-supported path that
+  retries (up to 4 attempts) and re-fetches the live device from HA's
+  Bluetooth registry (`bleak-retry-connector` ships with HA core).
+
+### Added
+- Debug logging of every command sent and every notification received (raw
+  hex) plus an explicit "frame not D1/D2 (dropped)" line — makes a dead device
+  diagnosable from `home-assistant.log` alone.
+- `manifest.json` `requirements` entry for `bleak-retry-connector`.
+
+---
+
 ## [0.1.2] — 2026-09-15
 
 ### Fixed
