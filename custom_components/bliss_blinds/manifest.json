@@ -1,13 +1,13 @@
 {
   "domain": "bliss_blinds",
   "name": "Bliss Blinds",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "config_flow": true,
   "integration_type": "device",
   "iot_class": "local_polling",
   "dependencies": ["bluetooth"],
-  "documentation": "https://github.com/yourname/bliss_blinds",
-  "issue_tracker": "https://github.com/yourname/bliss_blinds/issues",
+  "documentation": "https://github.com/mistermej/Bliss-Blinds",
+  "issue_tracker": "https://github.com/mistermej/Bliss-Blinds/issues",
   "codeowners": [],
   "bluetooth": [
     {
