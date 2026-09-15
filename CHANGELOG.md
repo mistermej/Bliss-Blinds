@@ -15,6 +15,14 @@ This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ModuleNotFoundError`. `BleakError` is now imported from the top-level
   `bleak` package (where 3.x re-exports it).
 
+### Added
+- `async_reload_entry` — changing the blind type or `tilt_open` in the Options
+  flow now applies via reload instead of requiring a manual HA restart.
+
+### Changed
+- `manifest.json` `documentation` / `issue_tracker` URLs now point to the real
+  repository (`mistermej/Bliss-Blinds`); version bumped to 0.1.2.
+
 ---
 
 ## [0.1.1] — 2026-09-15

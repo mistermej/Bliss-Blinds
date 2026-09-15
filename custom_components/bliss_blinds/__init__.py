@@ -34,3 +34,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_shutdown()
 
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Re-apply options (blind type / tilt_open) by recreating the entry."""
+    await async_unload_entry(hass, entry)
+    await async_setup_entry(hass, entry)

@@ -19,8 +19,10 @@ import asyncio
 import logging
 from typing import Any, Callable, Optional
 
-from bleak import BleakClient
-from bleak.exceptions import BleakError
+# bleak 3.x re-exported BleakError at the top level (the old
+# ``bleak.exceptions`` module was renamed to ``bleak.exc`` in 3.0 —
+# importing it raises ModuleNotFoundError on HA 2026.x, which pins bleak==3.0.2).
+from bleak import BleakClient, BleakError
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
