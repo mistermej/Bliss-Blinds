@@ -44,7 +44,8 @@ DISCOVERY_NAME_RE = re.compile(r"^HD\d{4}$")
 # --------------------------------------------------------------------------- #
 # Raw command bytes (BlissCommands.smali <clinit>)                             #
 # --------------------------------------------------------------------------- #
-HEADER = b"\xff\x78\xea\x41"                    # BlissCommands.HEADER
+HEADER = b"\xff\x78\xea\x41"                    # BlissCommands.HEADER (commands)
+RESPONSE_HEADER = b"\xff\x01\x02\x03"           # Response prefix (motor replies)
 HEARTBEAT = b"\xff\x01\x01\x01\x01\x01\x01"     # BlissCommands.heartbeat
 READ_STATUS = HEADER + b"\xd1\x03\x01"          # BlissCommands.readStatus
 SET_TIME_PREFIX = HEADER + b"\x28\x07\x41\x35"  # BlissCommands.setTimePrefix
@@ -266,6 +267,18 @@ BOTTOM_UP_TYPES: frozenset[str] = frozenset(
     {BlindTypes.PLISSE_BOTTOM_UP, BlindTypes.DUETTE_BOTTOM_UP, BlindTypes.BA24}
 )
 
+# Geometries with two independently-movable bars: a double roller, and the
+# top-down/bottom-up (TDBU) family (BlindType.smali names).
+TWO_BAR_TYPES: frozenset[str] = frozenset(
+    {
+        BlindTypes.DOUBLE_ROLLER,
+        BlindTypes.DUETTE_TDBU,
+        BlindTypes.DUETTE_PLISSE_TDBU,
+        BlindTypes.PLISSE_TDBU,
+        BlindTypes.PLISSE_DUETTE_TDBU,
+    }
+)
+
 # BlindKt.smali getHasTilt — second-gen motors AND type ∈ {ShangriLa, Venetian,
 # VerticalVenetian, VV±}. Read via D1 byte[7] / D2 byte[5].
 HAS_TILT_TYPES: frozenset[str] = frozenset(
@@ -351,6 +364,21 @@ class BlindConfig:
         cloud/user data, not BLE — we use the app's null-branch default: HD3800
         is treated as double-servo (Blind.smali:2285)."""
         return self.motor_name == "HD3800"
+
+    @property
+    def has_two_bars(self) -> bool:
+        """Blind exposes two independently-movable bars (TOP / BOTTOM covers).
+
+        The app decides this from the blind *geometry*, not the motor: the
+        TDBU family and DoubleRoller move their two bars with separate frames
+        (``setPosition(F, BarType)`` → topToPosition / bottomToPosition). A
+        double-servo motor (HD3800) supplies the two servos, so such a motor is
+        also treated as two-bar — except for BA24, which rides moveBothBars but
+        drives its rails as one coordinated pair and must stay a single cover.
+        """
+        if self.blind_type in TWO_BAR_TYPES:
+            return True
+        return self.is_double_servo and self.blind_type != BlindTypes.BA24
 
     @property
     def is_curtain(self) -> bool:
@@ -606,11 +634,20 @@ def parse_frame(payload: bytes, blind: BlindConfig) -> Optional[BlindState]:
 
     Returns None for anything that is not a D1/D2 status frame. Byte offsets
     verified against the app response handlers (DeviceConnection.smali).
+
+    Response frames use RESPONSE_HEADER (FF 01 02 03), not the command HEADER.
     """
-    if payload is None or len(payload) < 5 or payload[:4] != HEADER:
+    if payload is None or len(payload) < 5:
         return None
 
-    body = payload[4:]
+    # Accept both command header and response header
+    if payload[:4] == HEADER:
+        body = payload[4:]
+    elif payload[:4] == RESPONSE_HEADER:
+        body = payload[4:]
+    else:
+        return None
+
     status = body[0]
 
     if status == STATUS_D1:

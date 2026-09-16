@@ -5,6 +5,45 @@ This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.1.5] — 2026-09-16
+
+### Fixed
+- **D2 status frames were dropped** — motors reply with the response header
+  `FF 01 02 03`, not the command header `FF 78 EA 41`. `parse_frame` only
+  accepted the command header, so every D2 (double-motor) frame logged
+  `frame not D1/D2 (dropped): status=0xD2` and the entity never updated.
+  Both headers are now accepted; the body offsets are unchanged.
+
+### Added
+- **Separate `Top` and `Bottom` cover entities for two-bar blinds.** Double-bar
+  geometry (DoubleRoller, DuetteTDBU, DuettePlisseTDBU, PlisseTDBU,
+  PlisseDuetteTDBU) and double-servo motors (HD3800) now expose two covers, each
+  driving its own bar via the app's per-bar frames — `topToPosition` (`B1 03`)
+  and `bottomToPosition` (`F4 03`), matching `setPosition(F, BarType)`.
+  Single-bar blinds keep the one combined cover they had.
+- `protocol.TWO_BAR_TYPES` and `BlindConfig.has_two_bars`.
+
+### Changed
+- `coordinator.async_open/async_close/async_stop/async_set_position` and
+  `_position_command` take an optional `bar` (TOP / BOTTOM). With no bar the
+  previous combined behaviour is unchanged.
+- BA24 stays a **single** cover: it also rides `moveBothBars`, but drives its
+  rails as one coordinated pair, so splitting it would move them out of sync.
+
+### Known limitation (new)
+- **The protocol carries only one position per D1/D2 frame** — there is no
+  per-bar position word (`handleMotorPositionResponse` decodes a single raw
+  value). Both bar entities therefore display the same reported position and
+  the same moving/opening status; only the *commands* are per-bar. This matches
+  the app, which likewise keeps a single `position` state.
+
+### Upgrading
+- A two-bar blind that previously had one `cover.<name>_blind` entity now gets
+  `cover.<name>_top` and `cover.<name>_bottom`. The old entity is left orphaned
+  in the registry — delete it in Settings → Devices & Services → Entities.
+
+---
+
 ## [0.1.4] — 2026-09-15
 
 ### Fixed

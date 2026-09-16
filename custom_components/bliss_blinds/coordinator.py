@@ -263,17 +263,18 @@ class BlissBlindCoordinator:
     # ------------------------------------------------------------------ #
     # Command API (called by the entities)                                 #
     # ------------------------------------------------------------------ #
-    async def async_open(self) -> None:
-        await self._send_motion(self._position_command(1.0))
+    async def async_open(self, bar: str | None = None) -> None:
+        await self._send_motion(self._position_command(1.0, bar))
 
-    async def async_close(self) -> None:
-        await self._send_motion(self._position_command(0.0))
+    async def async_close(self, bar: str | None = None) -> None:
+        await self._send_motion(self._position_command(0.0, bar))
 
-    async def async_stop(self) -> None:
+    async def async_stop(self, bar: str | None = None) -> None:
+        # RollerStop is bar-agnostic (halts whichever motor is running).
         await self._send_motion(ROLLER_STOP)
 
-    async def async_set_position(self, fraction: float) -> None:
-        await self._send_motion(self._position_command(fraction))
+    async def async_set_position(self, fraction: float, bar: str | None = None) -> None:
+        await self._send_motion(self._position_command(fraction, bar))
 
     async def async_set_tilt(self, tilt_percent: float) -> None:
         """tilt_percent 0..100 → cover tilt angle in the app's units."""
@@ -289,8 +290,16 @@ class BlissBlindCoordinator:
             frame = self._position_command(tilt_percent / 100.0)
         await self._send_motion(frame)
 
-    def _position_command(self, fraction: float) -> bytes:
-        """The exact move-to-position frame the app sends for this blind type."""
+    def _position_command(self, fraction: float, bar: str | None = None) -> bytes:
+        """The exact move-to-position frame the app sends for this blind type.
+
+        When ``bar`` is TOP or BOTTOM the frame targets that bar alone
+        (topToPosition / bottomToPosition) — the two-entity path. With no bar
+        the combined single-entity path is used: BA24 complement pair,
+        double-servo moveBothBars, else the plain top-bar command.
+        """
+        if bar in (BarType.TOP, BarType.BOTTOM):
+            return move_to_position_command(self.blind, fraction, bar=bar)
         if self.blind.blind_type == BlindTypes.BA24:
             return move_ba24_command(self.blind, fraction)
         if self.blind.is_double_servo or self.blind.blind_type == BlindTypes.DOUBLE_ROLLER:
