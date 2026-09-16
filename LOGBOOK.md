@@ -198,6 +198,8 @@ All depend on configurable `tilt_open` (default 0.0):
 | **Config flow won't load: "Invalid handler specified" — `bleak.exceptions` is gone in bleak 3.x** | After manifest fix, user saw "Config flow could not be loaded: {\"message\":\"Invalid handler specified\"}" | HA 2026.9 pins **bleak==3.0.2**, and bleak 3.0 **renamed `bleak.exceptions` → `bleak.exc`**. Our `from bleak.exceptions import BleakError` raised `ModuleNotFoundError` the instant HA imported `config_flow.py` (package `__init__` → coordinator chain), and HA surfaces any import failure in the flow chain as the generic "Invalid handler specified". Fixed to `from bleak import BleakClient, BleakError` (BleakError is re-exported at the top level in 3.x). Also verified the rest of our bleak API against v3.0.2: `BleakClient(device, timeout=…)` ✓, `write_gatt_char(char, data, response=True)` ✓, `is_connected` property ✓, `start_notify`/`stop_notify`/`connect`/`disconnect` ✓. **Lessons: (1) HA silently collapses a config-flow import error into "Invalid handler specified" — the real traceback is only in home-assistant.log; (2) when targeting current HA, verify third-party API names against HA's pinned dependency versions (package_constraints.txt).** |
 | **TDBU blind types (PlisseTDBU/DuetteTDBU/DuettePlisseTDBU/PlisseDuetteTDBU) "don't do anything" — cover never moves, battery stuck Unknown, entity unavailable** | Live test: selecting a TDBU type for an HD3800 produced a dead cover + dead battery; HA log showed `BleakClient.connect() called without bleak-retry-connector` | Two-part investigation. **(1) Protocol check:** TDBU needs **no** type-specific handling. `BlindKt.isTDBU` (`BlindKt.smali:785`) is used *only* in the advanced-settings UI (`AdvancedSettingsScreenKt.smali:6515`), never for movement or parsing. Movement = the standard double-servo path: `setPosition(FF)` (`DeviceConnection.smali:8531`) builds `moveBothBars + short(round(f·range)) + short(...)` where callers pass `f = 1 − displayValue/100` (`MultiConnectViewModel.smali:5354–5385`), i.e. `raw = round((1−d)·range)` — byte-identical to our `move_both_bars_command`. readStatus stays `FF 78 EA 41 D1 03 01` (`BlissCommands.smali:1464`). The reply is D1 or D2 and our `parse_frame` already matches the app's indices (`handleMotorPositionResponse` `DeviceConnection.smali:4969`; D2 tilt at body[5] `:2850`). **(2) Root cause:** the coordinator connected with a bare `BleakClient.connect()`. On HA that bypasses `bleak_retry_connector.establish_connection()` (the supported path, ships with HA core as `==4.7.1`), which warns and connects unreliably → no notify ever arrives → `available` stays False → entity shows "unavailable". **Fix:** connect via `establish_connection(BleakClient, device, address, timeout=…, ble_device_callback=…)` (retries up to 4, re-fetches the live registry device). Also added per-frame debug logging (`send:`/`notify:` hex ⇒ distinguishes "motor never replies" from "frame unparsed"). Signed off against the actual pinned wheels (bleak 3.0.2 accepts the `establish_connection` kwargs; `BleakConnectionError` subclasses `BleakError`). |
 
+| **D2 frames silently dropped — "the blind never updates"** | Live debug log: `notify: FF 01 02 03 D2 02 46 BC 02` immediately followed by `frame not D1/D2 (dropped): status=0xD2 len=9`. The motor *was* answering; we threw the answer away. | Response frames carry the header **`FF 01 02 03`**, not the command header `FF 78 EA 41`. `parse_frame` began with `payload[:4] != HEADER: return None`, so every real status frame failed the header test. Confirmed against the app: the notify handler hands `handleMotorPositionResponse` a `List<Byte>` whose element 0 is the *status byte* (D1/D2) with the preamble already stripped (`DeviceConnection.smali` checks `first()` against `-0x30`/`-0x2f`, i.e. 0xD0/0xD1). **Fix:** `RESPONSE_HEADER = b"\xff\x01\x02\x03"` and `parse_frame` now accepts either header before slicing the body. Body offsets were already right (my hand-decode of `D2 02 46 BC 02` → raw `0x02BC` = 700 → 0.30 gives 0.30, matching `handleMotorPositionResponse`'s `1 − raw/range` for a normal motor). |
+
 ---
 
 ## 2026-09-15: Live-Test Fix — connect reliability (0.1.3)
@@ -356,4 +358,70 @@ line. This makes protocol-level blind spots diagnosable without code changes.
 
 ---
 
-*End of logbook. Last updated: 2026-09-15.*
+## 2026-09-16: Two-bar blinds — top/bottom covers (0.1.5)
+
+Two changes, both from the same live debug log:
+
+```
+send:   FF 78 EA 41 28 07 41 35 1A 09 0F 11 2E 33   # setInternalClock (0.1.4)
+send:   FF 78 EA 41 D1 03 01                          # readStatus
+notify: FF 01 02 03 D2 02 46 BC 02                    # D2 — WAS BEING DROPPED
+notify: FF 01 02 03 70 02 1F 2D 01                    # status 0x70 — not D1/D2
+```
+
+### 1. The response header is `FF 01 02 03`
+
+See the bug table above. The D2 frame was valid all along; the parser's header
+check rejected it. Nothing about the body offsets or the encode needed to
+change — only the 4-byte preamble test.
+
+`0x70` remains dropped on purpose: the app's response dispatcher only acts on
+0xD0–0xD5+ (`-0x30` … `-0x2b`, plus password/reset replies). 0x70 is some other
+reply type we have no use for.
+
+### 2. Two bars ⇒ two covers
+
+**How the app models it.** Read to settle the design, not guessed:
+
+| Question | Finding |
+|---|---|
+| Does a D1/D2 frame carry two positions? | **No.** `handleMotorPositionResponse` (`DeviceConnection.smali:4929`) decodes exactly one raw value — `getShortValue(bytes, 3)` for range 1000, else `list[2]`. The 9-byte notify has room for one position, not two. |
+| Then how does the app move one bar? | `MultiConnectViewModel$DeviceConnection.setPosition(F, BarType)` (`MovementBottomSheet.smali:1039`) — a **bar-tagged** command: TOP → `topToPosition`, BOTTOM → `bottomToPosition`, TILT → `tiltToAngle` (`BlissCommandsKt.getMoveToCommandForBarType`). |
+| Does the app decide "two bars" from the motor or the blind? | The **blind geometry**. The D2 handler's position read is gated on `motorType == HD3800 && isDoubleServo()` (`DeviceConnection.smali:400`), but the two-slider UI keys off the blind type (`isTDBU`, `BlindKt.smali:785`). |
+
+**Design chosen.** `BlindConfig.has_two_bars` = blind type ∈ `TWO_BAR_TYPES`
+(DoubleRoller + the four *TDBU variants), **or** a double-servo motor (HD3800)
+— with **BA24 excluded**. BA24 also rides `moveBothBars`, but it drives its two
+rails as one coordinated pair (`move_ba24_command`: complement + full range), so
+splitting it into independent bars would run the rails out of sync. The
+double-servo fallback is there so an HD3800 configured with a plain type still
+gets its two entities (the user's live motor reports D2 ⇒ double motor).
+
+**Honest limitation.** Since one frame carries one position, both bar entities
+read the *same* `position_fraction` and the same operating status. Only the
+commands are per-bar. This mirrors the app, which keeps a single `position`
+LiveData for every blind type (`MovementBottomSheet.smali:3030`). Recorded in
+the CHANGELOG under "Known limitation" and in `cover.py`'s class docstring.
+
+**Tilt.** Tilt is gated onto the TOP entity only (`bar != BOTTOM`); a bottom bar
+has no tilt axis. `set_tilt_command` / `set_shangrila_tilt_command` are
+bar-agnostic (they use the `tiltToAngle` prefix), so no change was needed there.
+
+### Files touched
+
+| File | Change |
+|---|---|
+| `protocol.py` | `RESPONSE_HEADER`; `parse_frame` accepts either header; `TWO_BAR_TYPES`; `BlindConfig.has_two_bars` |
+| `coordinator.py` | `async_open/async_close/async_stop/async_set_position` + `_position_command` take an optional `bar`; per-bar frames when bar is TOP/BOTTOM, previous combined behaviour otherwise |
+| `cover.py` | `BlissCover(coordinator, bar=None)`; `async_setup_entry` adds TOP+BOTTOM for `has_two_bars`, else one cover; dropped a dead `import math` |
+| `tests/test_protocol.py` | +7 tests (52 total): response-header accepted, both headers equivalent, per-bar frames, per-bar prefixes distinct, `has_two_bars` truth table |
+
+### Upgrade note for the user
+
+The old single cover (`..._cover`) is replaced by `..._top` / `..._bottom` on
+two-bar blinds. HA leaves the old entity orphaned in the registry — delete it
+under Settings → Devices & Services → Entities.
+
+---
+
+*End of logbook. Last updated: 2026-09-16.*

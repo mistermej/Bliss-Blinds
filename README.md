@@ -2,7 +2,7 @@
 
 Home Assistant integration for **Hunter Douglas Bliss** motorized blinds over
 Bluetooth Low Energy. One `cover` (+ optional tilt) and a battery sensor per
-motor.
+motor — or **two covers** (`Top` / `Bottom`) for two-bar blinds.
 
 Built **from scratch** by reverse-engineering the official **Bliss app
 v3.2.0** (decompiled APK). Every byte, offset, and formula is cited to the
@@ -53,9 +53,21 @@ movement behind a password, and none is needed.
 
 | Entity | Description |
 |---|---|
-| `cover.<name>_blind` | Position `0–100`, open / close / stop / set position, and tilt for tilting blind types. |
+| `cover.<name>_blind` | Position `0–100`, open / close / stop / set position, and tilt for tilting blind types. Single-bar blinds only. |
+| `cover.<name>_top` | **Two-bar blinds only** — drives the top bar (`topToPosition`). Carries tilt where the type has one. |
+| `cover.<name>_bottom` | **Two-bar blinds only** — drives the bottom bar (`bottomToPosition`). |
 | `sensor.<name>_battery` | Coarse 4-state battery (diagnostic). |
 | `sensor.<name>_nordic_error` | Nordic motor error code for **HD3600 / HD3900** (diagnostic, off by default). |
+
+A blind gets two covers when its geometry is two-bar — **DoubleRoller** or any
+of the four **TDBU** (top-down/bottom-up) types — or when the motor is a
+double-servo **HD3800**. BA24 keeps a single cover: it drives its two rails as
+one coordinated pair.
+
+> **Protocol limit:** a D1/D2 status frame carries only **one** position, so both
+> bar entities report the same position and moving/opening state. The *commands*
+> are per-bar and independent; the *readout* is not. This matches the app, which
+> keeps a single position value for every blind type.
 
 Autodetected from the BLE name: motor **range** (HD0100 = 100, all others =
 1000), **generation**, **Nordic** support, direction inversion (HD1300 +
@@ -95,7 +107,7 @@ cd bliss_blinds
 python -m unittest discover -s tests
 ```
 
-The protocol module has **no HA imports** and is fully unit-tested (43 tests)
+The protocol module has **no HA imports** and is fully unit-tested (52 tests)
 against known frame bytes. Note this README's command tables reference the
 decompiled app; see `protocol.py` docstrings for the `file:line` sources.
 

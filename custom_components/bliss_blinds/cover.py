@@ -1,8 +1,10 @@
-"""Cover platform — one Blind cover per connected Hunter Douglas motor."""
+"""Cover platform — one Blind cover per connected Hunter Douglas motor.
+
+Double-bar blinds (HD3800 double-servo, DoubleRoller, *TDBU) get two covers,
+one per bar (``TOP`` / ``BOTTOM``); everything else gets a single cover.
+"""
 
 from __future__ import annotations
-
-import math
 
 from homeassistant.components.cover import (
     CoverDeviceClass,
@@ -15,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .coordinator import BlissBlindCoordinator
-from .protocol import OperatingStatus
+from .protocol import BarType, OperatingStatus
 
 
 async def async_setup_entry(
@@ -24,19 +26,40 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: BlissBlindCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([BlissCover(coordinator)])
+    if coordinator.blind.has_two_bars:
+        async_add_entities(
+            [
+                BlissCover(coordinator, bar=BarType.TOP),
+                BlissCover(coordinator, bar=BarType.BOTTOM),
+            ]
+        )
+    else:
+        async_add_entities([BlissCover(coordinator)])
 
 
 class BlissCover(CoverEntity):
-    """A single-cover position (plus tilt where the blind type has it)."""
+    """A single cover for one bar (or the whole blind when bar is None).
+
+    Position readout comes from the motor's one reported D1/D2 position — the
+    protocol has no per-bar position word — but each bar is commanded
+    independently (topToPosition / bottomToPosition).
+    """
 
     _attr_has_entity_name = True
     _attr_device_class = CoverDeviceClass.BLIND
 
-    def __init__(self, coordinator: BlissBlindCoordinator) -> None:
+    def __init__(
+        self, coordinator: BlissBlindCoordinator, bar: str | None = None
+    ) -> None:
         self.coordinator = coordinator
-        self._attr_unique_id = f"{coordinator.address}_cover"
-        self._attr_name = "Blind"
+        self._bar = bar
+        if bar is None:
+            self._attr_unique_id = f"{coordinator.address}_cover"
+            self._attr_name = "Blind"
+        else:
+            label = "Top" if bar == BarType.TOP else "Bottom"
+            self._attr_unique_id = f"{coordinator.address}_{bar.lower()}"
+            self._attr_name = label
 
         features = (
             CoverEntityFeature.OPEN
@@ -44,8 +67,10 @@ class BlissCover(CoverEntity):
             | CoverEntityFeature.STOP
             | CoverEntityFeature.SET_POSITION
         )
+        # Tilt rides the top motor; a bottom bar never has a tilt axis.
         if coordinator.blind.has_tilt_angle or coordinator.blind.is_shangrila:
-            features |= CoverEntityFeature.SET_TILT
+            if bar != BarType.BOTTOM:
+                features |= CoverEntityFeature.SET_TILT
         self._attr_supported_features = features
 
     @property
@@ -102,19 +127,19 @@ class BlissCover(CoverEntity):
 
     # -- commands --------------------------------------------------------- #
     async def async_open_cover(self, **kwargs) -> None:
-        await self.coordinator.async_open()
+        await self.coordinator.async_open(self._bar)
 
     async def async_close_cover(self, **kwargs) -> None:
-        await self.coordinator.async_close()
+        await self.coordinator.async_close(self._bar)
 
     async def async_stop_cover(self, **kwargs) -> None:
-        await self.coordinator.async_stop()
+        await self.coordinator.async_stop(self._bar)
 
     async def async_set_cover_position(self, **kwargs) -> None:
         position = kwargs.get("position")
         if position is None:
             return
-        await self.coordinator.async_set_position(position / 100.0)
+        await self.coordinator.async_set_position(position / 100.0, self._bar)
 
     async def async_set_cover_tilt_position(self, **kwargs) -> None:
         tilt = kwargs.get("tilt_position")

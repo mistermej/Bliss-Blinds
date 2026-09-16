@@ -26,6 +26,7 @@ _PROTOCOL_SPEC.loader.exec_module(_PROTOCOL)
 
 from bliss_blinds_protocol import (  # noqa: E402
     ALL_BLIND_TYPES,
+    BOTTOM_TO_POSITION_PREFIX,
     BatteryLevel,
     BarType,
     BlindConfig,
@@ -38,6 +39,7 @@ from bliss_blinds_protocol import (  # noqa: E402
     MOTOR_MODELS,
     OperatingStatus,
     READ_STATUS,
+    RESPONSE_HEADER,
     ROLLER_STOP,
     SET_TIME_PREFIX,
     TILT_TO_ANGLE_PREFIX,
@@ -137,6 +139,31 @@ class TestDirection(unittest.TestCase):
         self.assertTrue(BlindConfig("HD3800", BlindTypes.BA24).is_double_servo)
         self.assertFalse(BlindConfig("HD3600", BlindTypes.ROLLER).is_double_servo)
 
+    def test_has_two_bars(self):
+        # Two-bar geometry ⇒ two bars, whatever the motor.
+        for t in (
+            BlindTypes.DOUBLE_ROLLER,
+            BlindTypes.DUETTE_TDBU,
+            BlindTypes.DUETTE_PLISSE_TDBU,
+            BlindTypes.PLISSE_TDBU,
+            BlindTypes.PLISSE_DUETTE_TDBU,
+        ):
+            self.assertTrue(BlindConfig("HD3800", t).has_two_bars, t)
+            self.assertTrue(BlindConfig("HD3600", t).has_two_bars, t)
+
+    def test_has_two_bars_double_servo_motor(self):
+        # A double-servo motor supplies two servos even for a plain type…
+        self.assertTrue(BlindConfig("HD3800", BlindTypes.ROLLER).has_two_bars)
+        # …but BA24 rides moveBothBars as one coordinated pair — one cover.
+        self.assertFalse(BlindConfig("HD3800", BlindTypes.BA24).has_two_bars)
+
+    def test_has_two_bars_single_bar(self):
+        self.assertFalse(BlindConfig("HD0400", BlindTypes.ROLLER).has_two_bars)
+        self.assertFalse(BlindConfig("HD0400", BlindTypes.VENETIAN).has_two_bars)
+        # Top-down-only / bottom-up-only types are a single bar.
+        self.assertFalse(BlindConfig("HD0400", BlindTypes.DUETTE_TOP_DOWN).has_two_bars)
+        self.assertFalse(BlindConfig("HD0400", BlindTypes.PLISSE_BOTTOM_UP).has_two_bars)
+
 
 class TestTiltCapability(unittest.TestCase):
     def test_has_tilt_requires_second_gen(self):
@@ -217,6 +244,26 @@ class TestMoveFrames(unittest.TestCase):
         self.assertEqual(
             move_both_bars_command(blind, 0.5, 0.25),
             MOVE_BOTH_BARS_PREFIX + short_le(500) + short_le(750),
+        )
+
+    def test_per_bar_commands(self):
+        # TOP bar ⇒ topToPosition (B1 03); BOTTOM bar ⇒ bottomToPosition (F4 03).
+        blind = BlindConfig("HD3800", BlindTypes.DUETTE_TDBU)
+        self.assertEqual(
+            move_to_position_command(blind, 0.6, bar=BarType.TOP),
+            TOP_TO_POSITION_PREFIX + short_le(400),  # normal: (1-0.6)*1000
+        )
+        self.assertEqual(
+            move_to_position_command(blind, 0.6, bar=BarType.BOTTOM),
+            BOTTOM_TO_POSITION_PREFIX + short_le(400),
+        )
+
+    def test_per_bar_prefixes_are_distinct(self):
+        # A top-bar and a bottom-bar move must never emit the same frame.
+        blind = BlindConfig("HD3800", BlindTypes.DOUBLE_ROLLER)
+        self.assertNotEqual(
+            move_to_position_command(blind, 0.5, bar=BarType.TOP),
+            move_to_position_command(blind, 0.5, bar=BarType.BOTTOM),
         )
 
 
@@ -350,6 +397,24 @@ class TestParseD2(unittest.TestCase):
         state = parse_frame(payload, blind)
         self.assertEqual(state.tilt_angle, 0x5A)
         self.assertAlmostEqual(state.position_fraction, 0.0, places=3)  # raw 1000
+
+    def test_response_header_accepted(self):
+        # Live log: motors reply with FF 01 02 03 response header, NOT the
+        # command header. FF 01 02 03 D2 02 46 BC 02 → D2 status at body[0].
+        blind = BlindConfig("HD0400", BlindTypes.ROLLER)
+        payload = bytes([0xFF, 0x01, 0x02, 0x03, 0xD2, 0x02, 0x46, 0xBC, 0x02])
+        state = parse_frame(payload, blind)
+        self.assertIsNotNone(state)
+        # For range 1000: raw = body[3] | body[4]<<8 = 0x02BC = 700 → normal 0.3
+        self.assertAlmostEqual(state.position_fraction, 0.3, places=3)
+        self.assertEqual(state.battery, BatteryLevel.NORMAL)  # flags=0x02
+
+    def test_command_and_response_header_equivalent(self):
+        # Both byte patterns must produce identical state.
+        blind = BlindConfig("HD0400", BlindTypes.ROLLER)
+        cmd = HEADER + bytes([0xD1, 0x08, 0x00, 0xE8, 0x03, 0x00, 0x00, 0x00])
+        resp = RESPONSE_HEADER + bytes([0xD1, 0x08, 0x00, 0xE8, 0x03, 0x00, 0x00, 0x00])
+        self.assertEqual(parse_frame(cmd, blind), parse_frame(resp, blind))
 
 
 class TestConstants(unittest.TestCase):
